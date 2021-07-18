@@ -1,3 +1,4 @@
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
@@ -9,6 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -164,10 +168,11 @@ fun LazyListScope.itemsWithDnd(
 		}
 	) { destIndex ->
 		val srcIndex by rememberUpdatedState(state.calculateSrcIndex(destIndex))
+		val scope = rememberCoroutineScope()
 
 		val selectedItem = state.selectedItem
 		val elevation: Float
-		val translation: Float
+		val translation = remember { Animatable(0f) }
 		val zIndex: Float
 
 		if (selectedItem != null) {
@@ -183,7 +188,7 @@ fun LazyListScope.itemsWithDnd(
 				val previousFramesTranslation = state.currentMousePosition - initialMousePosition
 				val lag = state.shift - state.visibleShift
 				// Lag will usually be zero but we rendering based on previous frame's data, so it might not be.
-				translation = if (lag == 0) {
+				val newTranslation = if (lag == 0) {
 					previousFramesTranslation
 				} else {
 					val selectedItemIndex = state.selectedItemIndex
@@ -197,21 +202,40 @@ fun LazyListScope.itemsWithDnd(
 					val pendingTranslation = pendingShifts.sumOf { it.size } * lag.sign
 					previousFramesTranslation - pendingTranslation
 				}
+				scope.launch { translation.snapTo(newTranslation) }
 			} else {
 				elevation = 0.0f
 				zIndex = 0.0f
-				val animatedTranslation by animateFloatAsState(if (destIndex == srcIndex) 0.0f else 1.0f)
-				val translationSize = selectedItemInfo.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
-				translation = if (destIndex == srcIndex) {
-					animatedTranslation * -translationSize
-				} else {
-					(1 - animatedTranslation) * translationSize
+				val translationMagnitude by rememberUpdatedState(selectedItemInfo.size.toFloat())
+				val isShifted by rememberUpdatedState(destIndex != srcIndex)
+				LaunchedEffect(Unit) {
+					// FIXME: This code assumes the selected item won't change it's size.
+					translation.snapTo(0f)
+					snapshotFlow { isShifted }
+						.drop(1)
+						.collect { isShifted ->
+							if (isShifted) { // We've been shifted for Dnd
+								// Snap to previously rendered position.
+								translation.snapTo(translationMagnitude)
+								// Animate to into new position.
+								launch {
+									translation.animateTo(0f)
+								}
+							} else { // We've been restored for Dnd
+								// Snap to previously rendered position.
+								translation.snapTo(-translationMagnitude)
+								// Animate to into new position.
+								launch {
+									translation.animateTo(0f)
+								}
+							}
+						}
 				}
 			}
 		} else {
 			elevation = 0.0f
 			zIndex = 0.0f
-			translation = 0.0f
+			scope.launch { translation.snapTo(0f) }
 		}
 
 		val pointerModifier = Modifier.pointerInput(Unit) {
@@ -250,7 +274,7 @@ fun LazyListScope.itemsWithDnd(
 		val modifier = pointerModifier
 			.zIndex(zIndex)
 			.graphicsLayer {
-				translationY = translation
+				translationY = translation.value
 				shadowElevation = animatedElevation
 			}
 
