@@ -168,7 +168,6 @@ fun LazyListScope.itemsWithDnd(
 		}
 	) { destIndex ->
 		val srcIndex by rememberUpdatedState(state.calculateSrcIndex(destIndex))
-		val scope = rememberCoroutineScope()
 
 		val selectedItem = state.selectedItem
 		val elevation: Float
@@ -202,7 +201,9 @@ fun LazyListScope.itemsWithDnd(
 					val pendingTranslation = pendingShifts.sumOf { it.size } * lag.sign
 					previousFramesTranslation - pendingTranslation
 				}
-				scope.launch { translation.snapTo(newTranslation) }
+				LaunchedEffect(newTranslation) {
+					translation.snapTo(newTranslation)
+				}
 			} else {
 				elevation = 0.0f
 				zIndex = 0.0f
@@ -235,7 +236,9 @@ fun LazyListScope.itemsWithDnd(
 		} else {
 			elevation = 0.0f
 			zIndex = 0.0f
-			scope.launch { translation.snapTo(0f) }
+			LaunchedEffect(Unit) {
+				translation.snapTo(0f)
+			}
 		}
 
 		val pointerModifier = Modifier.pointerInput(Unit) {
