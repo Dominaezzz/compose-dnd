@@ -214,7 +214,7 @@ fun LazyListScope.itemsWithDnd(
 			translation = 0.0f
 		}
 
-		val pointerModifier = Modifier.pointerInput(Unit) {
+		val pointerModifier = Modifier.pointerInput(key(srcIndex)) {
 			detectDragGestures(
 				onDragStart = { slopPosition, position ->
 					debug { "Dragging started!" }
