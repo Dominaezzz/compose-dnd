@@ -13,23 +13,20 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
 
-internal data class DndItemKey(val srcIndex: Int, val originalKey: Any)
+internal data class SelectedItem(val srcIndex: Int, val key: Any)
 
 class DragAndDropState(
 	private val move: (Int, Int) -> Unit,
 	internal val listState: LazyListState
 ) {
-	internal var selectedItem by mutableStateOf<DndItemKey?>(null)
-	internal var clickOffset by mutableStateOf(0.0f)
-	internal var currentMousePosition: Float by mutableStateOf(0.0f)
+	internal var selectedItem by mutableStateOf<SelectedItem?>(null)
+	internal var dragDelta: Float by mutableStateOf(0.0f)
+	internal var shift: Int by mutableStateOf(0)
 
 	internal val selectedItemIndex: Int by derivedStateOf {
-		val selected = selectedItem
+		val selected = selectedItem?.key
 		listState.layoutInfo.visibleItemsInfo.indexOfFirst { it.key == selected }
 	}
-
-	val visibleShift: Int by derivedStateOf { calculateRenderedShift() }
-	val shift: Int by derivedStateOf { visibleShift + calculatePendingShift() }
 
 	internal fun finishDrag() {
 		val targetItem = selectedItem!!
@@ -40,18 +37,16 @@ class DragAndDropState(
 		move(targetItem.srcIndex, destIndex)
 	}
 
-	private fun calculatePendingShift(): Int {
+	internal fun tryConsumeDrag() {
 		val selectedItemIndex = selectedItemIndex
-		if (selectedItemIndex == -1) return 0
-
-		/// Calculate additional shift based on pointer position.
+		check(selectedItemIndex != -1) { "Can only drag selected item." }
 
 		val items = listState.layoutInfo.visibleItemsInfo
 
 		// TODO: Need to handle reverse layout.
-		val dragDelta = currentMousePosition - (items[selectedItemIndex].offset + clickOffset)
+		val initialDragDelta = this.dragDelta
 
-		val potentiallyOverlappingItems = if (dragDelta > 0) {
+		val potentiallyOverlappingItems = if (initialDragDelta > 0) {
 			// User is dragging downwards
 			items.asSequence().drop(selectedItemIndex + 1)
 		} else {
@@ -60,63 +55,24 @@ class DragAndDropState(
 		}
 
 		var extraShift = 0
-		var unconsumedDelta = abs(dragDelta)
+		var unconsumedDelta = abs(initialDragDelta)
 		for (item in potentiallyOverlappingItems) {
-			val itemKey = item.key
-			if (itemKey !is DndItemKey) break
+			// TODO: Break loop if item is out of dnd range.
 			if (item.size < unconsumedDelta) {
 				unconsumedDelta -= item.size
 				extraShift++
 			} else {
 				val fraction = unconsumedDelta / item.size
 				if (fraction > 0.55f) {
+					unconsumedDelta -= item.size
 					extraShift++
 				}
 				break
 			}
 		}
 
-		return extraShift * sign(dragDelta).roundToInt()
-	}
-
-	private fun calculateRenderedShift(): Int {
-		val selectedItemKey = selectedItem ?: return 0
-		val items = listState.layoutInfo.visibleItemsInfo
-		val selectedItemIndex = selectedItemIndex
-		val nextItemIndex = selectedItemIndex + 1
-		val prevItemIndex = selectedItemIndex - 1
-
-		// TODO: Doesn't handle adjacent DnD scopes.
-
-		if (prevItemIndex >= 0) {
-			val prevItemKey = items[prevItemIndex].key
-			if (prevItemKey is DndItemKey) {
-				return if (prevItemKey.srcIndex <= selectedItemKey.srcIndex) {
-					prevItemKey.srcIndex - selectedItemKey.srcIndex + 1
-				} else {
-					prevItemKey.srcIndex - selectedItemKey.srcIndex
-				}
-			}
-		}
-		if (nextItemIndex < items.size) {
-			val nextItemKey = items[nextItemIndex].key
-			if (nextItemKey is DndItemKey) {
-				return if (nextItemKey.srcIndex >= selectedItemKey.srcIndex) {
-					nextItemKey.srcIndex - selectedItemKey.srcIndex - 1
-				} else {
-					nextItemKey.srcIndex - selectedItemKey.srcIndex
-				}
-			}
-		}
-
-		// If this gets here, either there's only one item in the DnD scope
-		// or the current visible item is bigger than the LazyList's viewport.
-
-		// The former case should return zero and the latter should autoscroll.
-		// The latter could autoscroll but is not a pragmatic use of DnD, so it
-		// will stay "disabled" for now.
-
-		return 0
+		shift += extraShift * initialDragDelta.sign.roundToInt()
+		dragDelta = unconsumedDelta * initialDragDelta.sign
 	}
 
 	fun calculateSrcIndex(destIndex: Int): Int {
@@ -160,7 +116,7 @@ fun LazyListScope.itemsWithDnd(
 		count,
 		key = { destIndex ->
 			val srcIndex = state.calculateSrcIndex(destIndex)
-			DndItemKey(srcIndex, key(srcIndex))
+			key(srcIndex)
 		}
 	) { destIndex ->
 		val srcIndex by rememberUpdatedState(state.calculateSrcIndex(destIndex))
@@ -171,32 +127,12 @@ fun LazyListScope.itemsWithDnd(
 		val zIndex: Float
 
 		if (selectedItem != null) {
-			val selectedItemInfo = state.listState.layoutInfo.visibleItemsInfo.single {
-				val itsKey = it.key
-				itsKey is DndItemKey && itsKey.srcIndex == selectedItem.srcIndex
-			}
+			val selectedItemInfo = state.listState.layoutInfo
+				.visibleItemsInfo.single { it.key == selectedItem.key }
 			if (srcIndex == selectedItem.srcIndex) {
 				elevation = 16.0f
 				zIndex = 1.0f
-
-				val initialMousePosition = selectedItemInfo.offset + state.clickOffset
-				val previousFramesTranslation = state.currentMousePosition - initialMousePosition
-				val lag = state.shift - state.visibleShift
-				// Lag will usually be zero but we rendering based on previous frame's data, so it might not be.
-				translation = if (lag == 0) {
-					previousFramesTranslation
-				} else {
-					val selectedItemIndex = state.selectedItemIndex
-					val pendingShifts = with(state.listState.layoutInfo.visibleItemsInfo) {
-						if (lag > 0) {
-							subList(selectedItemIndex + 1, selectedItemIndex + lag + 1)
-						} else {
-							subList(selectedItemIndex + lag, selectedItemIndex)
-						}
-					}
-					val pendingTranslation = pendingShifts.sumOf { it.size } * lag.sign
-					previousFramesTranslation - pendingTranslation
-				}
+				translation = state.dragDelta
 			} else {
 				elevation = 0.0f
 				zIndex = 0.0f
@@ -214,18 +150,14 @@ fun LazyListScope.itemsWithDnd(
 			translation = 0.0f
 		}
 
-		val pointerModifier = Modifier.pointerInput(key(srcIndex)) {
+		val dragHandle = Modifier.pointerInput(key(srcIndex)) {
 			detectDragGestures(
 				onDragStart = { slopPosition, position ->
 					debug { "Dragging started!" }
 
-					val item = state.listState.layoutInfo.visibleItemsInfo.single {
-						val itsKey = it.key
-						itsKey is DndItemKey && itsKey.srcIndex == srcIndex
-					}
-					state.clickOffset = position.y
-					state.currentMousePosition = item.offset + slopPosition.y
-					state.selectedItem = item.key as DndItemKey
+					state.shift = 0
+					state.dragDelta = slopPosition.y - position.y
+					state.selectedItem = SelectedItem(srcIndex, key(srcIndex))
 				},
 				onDragEnd = {
 					debug { "Dragging ended!" }
@@ -239,16 +171,16 @@ fun LazyListScope.itemsWithDnd(
 					state.selectedItem = null
 				},
 				onDrag = { change, dragAmount ->
-					change.consumePositionChange()
-					state.currentMousePosition += dragAmount.y
+					change.consumeAllChanges()
+					state.dragDelta += dragAmount.y
+					state.tryConsumeDrag()
 					// Consider scrolling here
 				}
 			)
 		}
 
 		val animatedElevation by animateFloatAsState(elevation, spring())
-		val modifier = pointerModifier
-			.zIndex(zIndex)
+		val modifier = Modifier.zIndex(zIndex)
 			.graphicsLayer {
 				translationY = translation
 				shadowElevation = animatedElevation
@@ -256,7 +188,7 @@ fun LazyListScope.itemsWithDnd(
 
 		// FIXME: Need to find a way to apply Modifier without using Box.
 		//  Box changes the way items are laid out, Column would be better but LazyRow.
-		Box(modifier) {
+		Box(modifier.then(dragHandle)) {
 			itemContent(srcIndex)
 		}
 	}
