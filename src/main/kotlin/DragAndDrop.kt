@@ -1,7 +1,7 @@
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.*
@@ -26,6 +26,14 @@ class DragAndDropState(
 	internal val selectedItemIndex: Int by derivedStateOf {
 		val selected = selectedItem?.key
 		listState.layoutInfo.visibleItemsInfo.indexOfFirst { it.key == selected }
+	}
+	internal val selectedItemInfo: LazyListItemInfo? by derivedStateOf {
+		val index = selectedItemIndex
+		if (index != -1) {
+			listState.layoutInfo.visibleItemsInfo[index]
+		} else {
+			null
+		}
 	}
 
 	internal fun finishDrag() {
@@ -106,6 +114,13 @@ class DragAndDropState(
 	}
 }
 
+private enum class SelectState {
+	Default,
+	Idle,
+	Shifted,
+	Selected
+}
+
 fun LazyListScope.itemsWithDnd(
 	state: DragAndDropState,
 	count: Int,
@@ -122,32 +137,37 @@ fun LazyListScope.itemsWithDnd(
 		val srcIndex by rememberUpdatedState(state.calculateSrcIndex(destIndex))
 
 		val selectedItem = state.selectedItem
-		val elevation: Float
-		val translation: Float
-		val zIndex: Float
-
-		if (selectedItem != null) {
-			val selectedItemInfo = state.listState.layoutInfo
-				.visibleItemsInfo.single { it.key == selectedItem.key }
-			if (srcIndex == selectedItem.srcIndex) {
-				elevation = 16.0f
-				zIndex = 1.0f
-				translation = state.dragDelta
+		val transition = updateTransition(when {
+			selectedItem == null -> SelectState.Default
+			selectedItem.srcIndex == srcIndex -> SelectState.Selected
+			srcIndex != destIndex -> SelectState.Shifted
+			else -> SelectState.Idle
+		})
+		val elevation by transition.animateFloat { if (it == SelectState.Selected) 16f else 0f }
+		val zIndex by transition.animateFloat({ snap() }) { if (it == SelectState.Selected) 1f else 0f }
+		val idleTranslation by transition.animateFloat {
+			if (it == SelectState.Idle) {
+				0f
 			} else {
-				elevation = 0.0f
-				zIndex = 0.0f
-				val animatedTranslation by animateFloatAsState(if (destIndex == srcIndex) 0.0f else 1.0f)
-				val translationSize = selectedItemInfo.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
-				translation = if (destIndex == srcIndex) {
-					animatedTranslation * -translationSize
+				val info = state.selectedItemInfo
+				if (info != null && selectedItem != null) {
+					-info.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
 				} else {
-					(1 - animatedTranslation) * translationSize
+					0f
 				}
 			}
-		} else {
-			elevation = 0.0f
-			zIndex = 0.0f
-			translation = 0.0f
+		}
+		val shiftedTranslation by transition.animateFloat {
+			if (it == SelectState.Shifted) {
+				0f
+			} else {
+				val info = state.selectedItemInfo
+				if (info != null && selectedItem != null) {
+					info.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
+				} else {
+					0f
+				}
+			}
 		}
 
 		val dragHandle = Modifier.pointerInput(key(srcIndex)) {
@@ -179,11 +199,15 @@ fun LazyListScope.itemsWithDnd(
 			)
 		}
 
-		val animatedElevation by animateFloatAsState(elevation, spring())
 		val modifier = Modifier.zIndex(zIndex)
 			.graphicsLayer {
-				translationY = translation
-				shadowElevation = animatedElevation
+				translationY = when (transition.targetState) {
+					SelectState.Idle -> idleTranslation
+					SelectState.Shifted -> shiftedTranslation
+					SelectState.Selected -> state.dragDelta
+					SelectState.Default -> 0f
+				}
+				shadowElevation = elevation
 			}
 
 		// FIXME: Need to find a way to apply Modifier without using Box.
