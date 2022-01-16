@@ -1,4 +1,3 @@
-import androidx.compose.desktop.Window
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.singleWindowApplication
 
 data class Item(
 	val id: Int,
@@ -30,7 +30,7 @@ fun main() {
 	// val someItems = List (ITEM_COUNT) { Item(it, ((it + 1) * 5).dp) }.toMutableStateList()
 	// val someItems = List (ITEM_COUNT) { Item(it, ((ITEM_COUNT - it + 1) * 5).dp) }.toMutableStateList()
 
-	Window {
+	singleWindowApplication {
 		MaterialTheme {
 			val listState = rememberLazyListState()
 
