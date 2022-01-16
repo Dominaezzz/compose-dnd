@@ -114,13 +114,6 @@ class DragAndDropState(
 	}
 }
 
-private enum class SelectState {
-	Default,
-	Idle,
-	Shifted,
-	Selected
-}
-
 fun LazyListScope.itemsWithDnd(
 	state: DragAndDropState,
 	count: Int,
@@ -136,38 +129,32 @@ fun LazyListScope.itemsWithDnd(
 	) { destIndex ->
 		val srcIndex by rememberUpdatedState(state.calculateSrcIndex(destIndex))
 
+		val isSelected = state.selectedItem?.srcIndex == srcIndex
+
+		val elevation by animateFloatAsState(if (isSelected) 16f else 0f)
+		val zIndex by animateFloatAsState(if (isSelected) 1f else 0f)
+
 		val selectedItem = state.selectedItem
-		val transition = updateTransition(when {
-			selectedItem == null -> SelectState.Default
-			selectedItem.srcIndex == srcIndex -> SelectState.Selected
-			srcIndex != destIndex -> SelectState.Shifted
-			else -> SelectState.Idle
-		})
-		val elevation by transition.animateFloat { if (it == SelectState.Selected) 16f else 0f }
-		val zIndex by transition.animateFloat({ snap() }) { if (it == SelectState.Selected) 1f else 0f }
-		val idleTranslation by transition.animateFloat {
-			if (it == SelectState.Idle) {
-				0f
+
+		var prevDstIndex by remember { mutableStateOf<Int?>(null) }
+		var prevAnimatable by remember { mutableStateOf<Animatable<Float, AnimationVector1D>?>(null) }
+
+		val translation = remember(srcIndex, destIndex) {
+			val info = state.selectedItemInfo
+			val offset = if (info != null) {
+				info.size.toFloat() * ((prevDstIndex ?: 0) - destIndex).sign
 			} else {
-				val info = state.selectedItemInfo
-				if (info != null && selectedItem != null) {
-					-info.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
-				} else {
-					0f
-				}
+				0f
 			}
+			Animatable(offset + (prevAnimatable?.value ?: 0f))
 		}
-		val shiftedTranslation by transition.animateFloat {
-			if (it == SelectState.Shifted) {
-				0f
-			} else {
-				val info = state.selectedItemInfo
-				if (info != null && selectedItem != null) {
-					info.size.toFloat() * (srcIndex - selectedItem.srcIndex).sign
-				} else {
-					0f
-				}
-			}
+		LaunchedEffect(translation) { translation.animateTo(0f, spring(stiffness = Spring.StiffnessVeryLow)) }
+		if (selectedItem != null && selectedItem.srcIndex != srcIndex) {
+			prevDstIndex = destIndex
+			prevAnimatable = translation
+		} else {
+			prevDstIndex = null
+			prevAnimatable = null
 		}
 
 		val dragHandle = Modifier.pointerInput(key(srcIndex)) {
@@ -201,12 +188,7 @@ fun LazyListScope.itemsWithDnd(
 
 		val modifier = Modifier.zIndex(zIndex)
 			.graphicsLayer {
-				translationY = when (transition.targetState) {
-					SelectState.Idle -> idleTranslation
-					SelectState.Shifted -> shiftedTranslation
-					SelectState.Selected -> state.dragDelta
-					SelectState.Default -> 0f
-				}
+				translationY = if (isSelected) state.dragDelta else translation.value
 				shadowElevation = elevation
 			}
 

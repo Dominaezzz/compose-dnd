@@ -26,7 +26,7 @@ data class Item(
 const val ITEM_COUNT = 20
 
 fun main() {
-	val someItems = List (ITEM_COUNT) { Item(it, 30.dp) }.toMutableStateList()
+	val someItems = List (ITEM_COUNT) { Item(it, 60.dp) }.toMutableStateList()
 	// val someItems = List (ITEM_COUNT) { Item(it, ((it + 1) * 5).dp) }.toMutableStateList()
 	// val someItems = List (ITEM_COUNT) { Item(it, ((ITEM_COUNT - it + 1) * 5).dp) }.toMutableStateList()
 
