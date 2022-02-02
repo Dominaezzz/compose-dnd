@@ -1,5 +1,5 @@
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListScope
@@ -12,6 +12,9 @@ import androidx.compose.ui.zIndex
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
+
+private val LocalDragHandleModifier = compositionLocalOf<Modifier?> { null }
+private val LocalDragAnimationModifier = compositionLocalOf<Modifier?> { null }
 
 internal data class SelectedItem(val srcIndex: Int, val key: Any)
 
@@ -114,6 +117,19 @@ class DragAndDropState(
 	}
 }
 
+@ReadOnlyComposable
+@Composable
+fun Modifier.dragHandle(): Modifier {
+	return then(LocalDragHandleModifier.current ?: error("Must be used in itemsWithDnd"))
+}
+
+@ReadOnlyComposable
+@Composable
+fun Modifier.dragAnimations(): Modifier {
+	return then(LocalDragAnimationModifier.current ?: error("Must be used in itemsWithDnd"))
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 fun LazyListScope.itemsWithDnd(
 	state: DragAndDropState,
 	count: Int,
@@ -134,27 +150,24 @@ fun LazyListScope.itemsWithDnd(
 		val elevation by animateFloatAsState(if (isSelected) 16f else 0f)
 		val zIndex by animateFloatAsState(if (isSelected) 1f else 0f)
 
-		val selectedItem = state.selectedItem
+		val animationModifier = if (isSelected) {
+			var prevDstIndex by remember { mutableStateOf<Int?>(null) }
+			SideEffect { prevDstIndex = destIndex }
 
-		var prevDstIndex by remember { mutableStateOf<Int?>(null) }
-		var prevAnimatable by remember { mutableStateOf<Animatable<Float, AnimationVector1D>?>(null) }
+			Modifier.zIndex(zIndex)
+				.graphicsLayer {
+					translationY = state.dragDelta
+					shadowElevation = elevation
 
-		val translation = remember(srcIndex, destIndex) {
-			val info = state.selectedItemInfo
-			val offset = if (info != null) {
-				info.size.toFloat() * ((prevDstIndex ?: 0) - destIndex).sign
-			} else {
-				0f
-			}
-			Animatable(offset + (prevAnimatable?.value ?: 0f))
-		}
-		LaunchedEffect(translation) { translation.animateTo(0f, spring(stiffness = Spring.StiffnessVeryLow)) }
-		if (selectedItem != null && selectedItem.srcIndex != srcIndex) {
-			prevDstIndex = destIndex
-			prevAnimatable = translation
+					// This is to fix the glitching when items swap positions.
+					if (prevDstIndex != destIndex) {
+						// println("Drag delta is broken.")
+						alpha = 0f // This isn't being called......
+					}
+					// println("Drag delta ${state.dragDelta}")
+				}
 		} else {
-			prevDstIndex = null
-			prevAnimatable = null
+			Modifier.animateItemPlacement()
 		}
 
 		val dragHandle = Modifier.pointerInput(key(srcIndex)) {
@@ -186,15 +199,10 @@ fun LazyListScope.itemsWithDnd(
 			)
 		}
 
-		val modifier = Modifier.zIndex(zIndex)
-			.graphicsLayer {
-				translationY = if (isSelected) state.dragDelta else translation.value
-				shadowElevation = elevation
-			}
-
-		// FIXME: Need to find a way to apply Modifier without using Box.
-		//  Box changes the way items are laid out, Column would be better but LazyRow.
-		Box(modifier.then(dragHandle)) {
+		CompositionLocalProvider(
+			LocalDragHandleModifier provides dragHandle,
+			LocalDragAnimationModifier provides animationModifier
+		) {
 			itemContent(srcIndex)
 		}
 	}

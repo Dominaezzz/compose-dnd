@@ -49,7 +49,11 @@ fun main() {
 					val item = someItems[itemIdx]
 					Text(
 						"This is item number ${item.id + 1}.",
-						Modifier.background(item.color).padding(item.padding),
+						Modifier
+							.dragAnimations()
+							.dragHandle()
+							.background(item.color)
+							.padding(item.padding),
 						textAlign = TextAlign.Center
 					)
 					// Divider()
